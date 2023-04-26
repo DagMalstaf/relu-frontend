@@ -1,0 +1,69 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:15.2
+    ports:
+      - "5430:5432"
+    environment:
+      POSTGRES_PASSWORD: &postgres_password "docker1"
+      POSTGRES_USER: &postgres_user "docker"
+      POSTGRES_DB: &db_name "postgres"
+    volumes:
+      - ./database:/usr/src/app/database
+      - "dbdata:/var/lib/postgresql/data"
+  flyway:
+    image: flyway/flyway
+    command: -configFiles=/flyway/conf/flyway.conf info
+    volumes:
+      - ./flyway.conf:/flyway/conf/flyway.conf
+      - ./database/migrations:/flyway/sql
+    depends_on:
+      - db
+  app: &app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    working_dir: /usr/src/app/
+    volumes:
+      - .:/usr/src/app
+      - gomod-cache:/go/pkg/mod
+      - gobuild-cache:/.cache/go-build
+    entrypoint: "bash -c"
+  backend:
+    <<: *app
+    image: "patient_server"
+    environment:
+      DB_HOST: cloud-sql-proxy
+      DB_PORT: 5432
+      DB_USER: ${postgres_user}
+      DB_PASSWORD: ${postgres_password}
+      DB_NAME: ${db_name}
+    links:
+      - db
+      - cloud-sql-proxy
+    restart: always
+    working_dir: /usr/src/app/backend
+    ports:
+      - "8080:8080"
+    entrypoint: "nodemon --ext go,yaml --signal SIGTERM --exec go run cmd/main.go"
+  frontend:
+    <<: *app
+    links:
+      - backend
+    restart: always
+    working_dir: /usr/src/app/frontend
+    ports:
+      - "3000:3000"
+    entrypoint: "yarn dev"
+  cloud-sql-proxy:
+    image: gcr.io/cloudsql-docker/gce-proxy:1.27.0
+    command: /cloud_sql_proxy -instances=relu-backend:europe-west1:relu-sql-db=tcp:5432
+    ports:
+      - "5432:5432"
+
+volumes:
+  dbdata: {}
+  gomod-cache: {}
+  gobuild-cache: {}
